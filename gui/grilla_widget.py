@@ -666,9 +666,14 @@ class GrillaWidget(QWidget):
                 bbox = box.get('bbox', [])
                 if len(bbox) < 4:
                     continue
-                
-                # Coordenadas en frame original
-                x, y, w, h = bbox[:4]
+
+                # Formato de bbox: (x1, y1, x2, y2)
+                x1, y1, x2, y2 = bbox[:4]
+
+                # Convertir a (x, y, w, h)
+                x, y = x1, y1
+                w = x2 - x1
+                h = y2 - y1
                 
                 # 🔥 CONVERTIR COORDENADAS: Frame original → Área de video mostrada
                 if orig_w > 0 and orig_h > 0:
