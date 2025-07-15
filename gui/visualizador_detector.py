@@ -29,6 +29,7 @@ logger = get_logger(__name__)
 class VisualizadorDetector(QObject):
     result_ready = pyqtSignal(list) 
     log_signal = pyqtSignal(str)
+    frame_ready = pyqtSignal(QImage)  # 🔥 NUEVA SEÑAL PARA VIDEO
     frame_ready = pyqtSignal(QPixmap)
     stats_ready = pyqtSignal(dict)
 
