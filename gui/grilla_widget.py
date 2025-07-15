@@ -108,27 +108,37 @@ class GrillaWidget(QWidget):
             print(f"❌ Error en actualizar_frame: {e}")
             import traceback
             traceback.print_exc()
-    def recibir_frame_video(self, qimage):
+    def recibir_frame_video(self, frame):
         """🔥 NUEVO: Recibir frame de video del visualizador"""
         try:
-            if qimage and not qimage.isNull():
-                # Convertir QImage a QPixmap
-                pixmap = QPixmap.fromImage(qimage)
-                
-                # Establecer pixmap y original_frame_size
-                self.pixmap = pixmap
-                self.original_frame_size = (qimage.width(), qimage.height())
-                
-                # Debug cada 100 frames
-                if not hasattr(self, '_video_frame_count'):
-                    self._video_frame_count = 0
-                self._video_frame_count += 1
-                
-                if self._video_frame_count % 100 == 0:
-                    print(f"📺 Video frame recibido: {self.original_frame_size[0]}x{self.original_frame_size[1]}")
-                
-                # Forzar repintado
-                self.update()
+            if frame is None:
+                return
+
+            # Soportar tanto QImage como QPixmap
+            if isinstance(frame, QPixmap):
+                pixmap = frame
+            else:
+                pixmap = QPixmap.fromImage(frame)
+
+            if pixmap.isNull():
+                return
+
+            # Establecer pixmap y original_frame_size
+            self.pixmap = pixmap
+            self.original_frame_size = (pixmap.width(), pixmap.height())
+
+            # Debug cada 100 frames
+            if not hasattr(self, '_video_frame_count'):
+                self._video_frame_count = 0
+            self._video_frame_count += 1
+
+            if self._video_frame_count % 100 == 0:
+                print(
+                    f"📺 Video frame recibido: {self.original_frame_size[0]}x{self.original_frame_size[1]}"
+                )
+
+            # Forzar repintado
+            self.update()
                 
         except Exception as e:
             print(f"❌ Error recibiendo frame de video: {e}")
@@ -656,9 +666,14 @@ class GrillaWidget(QWidget):
                 bbox = box.get('bbox', [])
                 if len(bbox) < 4:
                     continue
-                
-                # Coordenadas en frame original
-                x, y, w, h = bbox[:4]
+
+                # Formato de bbox: (x1, y1, x2, y2)
+                x1, y1, x2, y2 = bbox[:4]
+
+                # Convertir a (x, y, w, h)
+                x, y = x1, y1
+                w = x2 - x1
+                h = y2 - y1
                 
                 # 🔥 CONVERTIR COORDENADAS: Frame original → Área de video mostrada
                 if orig_w > 0 and orig_h > 0:
