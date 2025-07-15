@@ -1,0 +1,15 @@
+[
+    {
+        "ip": "192.168.1.3",
+        "puerto": 30012,
+        "usuario": "admin",
+        "contrasena": "@Remoto753524",
+        "tipo": "nvr",
+        "canal": "1",
+        "grilla": "grilla 1",
+        "nombre": "Cámara NVR Canal 1",
+        "rtsp": "rtsp://admin:%40Remoto753524@192.168.1.3:30012/unicast/c1/s0/live",
+        "puerto_rtsp": 30012,
+        "perfil": "main"
+    }
+]

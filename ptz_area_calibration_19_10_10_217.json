@@ -1,0 +1,36 @@
+{
+  "camera_ip": "19.10.10.217",
+  "frame_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "working_area": {
+    "top_left": {
+      "pan": 0.035,
+      "tilt": 0.4,
+      "zoom": 0.729
+    },
+    "bottom_left": {
+      "pan": 0.63,
+      "tilt": 0.647,
+      "zoom": 0.509
+    },
+    "top_right": {
+      "pan": -0.327,
+      "tilt": -0.58,
+      "zoom": 0.73
+    },
+    "bottom_right": {
+      "pan": -0.781,
+      "tilt": -0.737,
+      "zoom": 0.052
+    }
+  },
+  "settings": {
+    "dead_zone_x": 0.05,
+    "dead_zone_y": 0.05,
+    "max_movement_speed": 0.3,
+    "movement_smoothing": 0.7
+  },
+  "timestamp": 1751035836.3216426
+}
