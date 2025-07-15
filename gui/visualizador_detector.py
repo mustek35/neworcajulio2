@@ -13,6 +13,15 @@ except ImportError:
     FFMPEG_BRIDGE_AVAILABLE = False
     print("⚠️ FFmpeg Bridge no disponible - usando QMediaPlayer")
 
+# Detectar soporte GStreamer
+try:
+    from gstreamer_rtsp_bridge import GStreamerRTSPReader
+    GST_BRIDGE_AVAILABLE = True
+    print("✅ GStreamer Bridge disponible")
+except Exception:
+    GST_BRIDGE_AVAILABLE = False
+    print("⚠️ GStreamer Bridge no disponible")
+
 from PyQt6.QtMultimedia import QMediaPlayer, QVideoSink, QVideoFrameFormat, QVideoFrame
 from PyQt6.QtCore import QObject, pyqtSignal, QUrl, QTimer
 from PyQt6.QtGui import QImage, QPixmap
@@ -36,8 +45,19 @@ class VisualizadorDetector(QObject):
     def __init__(self, cam_data, parent=None):
         super().__init__(parent)
         self.cam_data = cam_data
-        cam_ip_for_name = self.cam_data.get('ip', str(id(self))) 
+        cam_ip_for_name = self.cam_data.get('ip', str(id(self)))
         self.setObjectName(f"Visualizador_{cam_ip_for_name}")
+
+        # Backend de decodificación
+        try:
+            import json
+            with open('config.json', 'r', encoding='utf-8') as f:
+                global_cfg = json.load(f)
+                global_backend = global_cfg.get('decoder_backend', 'ffmpeg')
+        except Exception:
+            global_backend = 'ffmpeg'
+
+        self.decoder_backend = cam_data.get('decoder_backend', global_backend)
 
         # Configuración de debug y rendimiento
         self.debug_visual = cam_data.get('debug_visual', True)
@@ -79,6 +99,10 @@ class VisualizadorDetector(QObject):
         self.ffmpeg_reader = None
         self.ffmpeg_thread = None
         self.using_ffmpeg = False
+        # Variables GStreamer
+        self.gst_reader = None
+        self.gst_thread = None
+        self.using_gstreamer = False
         
         # Estadísticas
         self.stats = {
@@ -87,6 +111,7 @@ class VisualizadorDetector(QObject):
             'processed_frames': 0,
             'detection_frames': 0,
             'ffmpeg_frames': 0,
+            'gst_frames': 0,
             'qt_frames': 0,
             'dropped_frames': 0,
             'last_fps_calculation': time.time(),
@@ -186,20 +211,26 @@ class VisualizadorDetector(QObject):
         self.stats['last_error'] = f"MediaPlayer: {error_msg}"
 
     def start_stream(self, rtsp_url):
-        """🔥 CORREGIDO: Iniciar stream con prioridad FFmpeg"""
+        """Iniciar stream según backend configurado"""
         self.log_signal.emit(f"🎬 [{self.objectName()}] Iniciando stream...")
         self.log_signal.emit(f"   🌐 URL: {rtsp_url[:60]}{'...' if len(rtsp_url) > 60 else ''}")
-        
-        # 🔥 USAR FFMPEG SIEMPRE QUE ESTÉ DISPONIBLE (SIN CONDICIONES)
-        if FFMPEG_BRIDGE_AVAILABLE:
-            self.log_signal.emit(f"🚀 [{self.objectName()}] Usando FFmpeg Bridge (alta performance)")
-            success = self._start_ffmpeg_bridge(rtsp_url)
-            if success:
+
+        backend = (self.decoder_backend or 'auto').lower()
+
+        if backend in ('gstreamer', 'auto') and GST_BRIDGE_AVAILABLE:
+            self.log_signal.emit(f"🚀 [{self.objectName()}] Usando GStreamer Bridge")
+            if self._start_gstreamer_bridge(rtsp_url):
                 return
-            else:
-                self.log_signal.emit(f"⚠️ [{self.objectName()}] FFmpeg falló, probando QMediaPlayer...")
-        
-        # Fallback a QMediaPlayer
+            self.log_signal.emit(f"⚠️ [{self.objectName()}] GStreamer falló, probando FFmpeg...")
+            backend = 'ffmpeg'
+
+        if backend in ('ffmpeg', 'auto') and FFMPEG_BRIDGE_AVAILABLE:
+            self.log_signal.emit(f"🚀 [{self.objectName()}] Usando FFmpeg Bridge (alta performance)")
+            if self._start_ffmpeg_bridge(rtsp_url):
+                return
+            self.log_signal.emit(f"⚠️ [{self.objectName()}] FFmpeg falló, probando QMediaPlayer...")
+
+        # Fallback QMediaPlayer
         self.log_signal.emit(f"📺 [{self.objectName()}] Usando QMediaPlayer (compatibilidad)")
         self._start_qmediaplayer(rtsp_url)
 
@@ -253,6 +284,28 @@ class VisualizadorDetector(QObject):
             self.log_signal.emit(f"❌ [{self.objectName()}] Error FFmpeg Bridge: {e}")
             self.stats['errors'] += 1
             self.stats['last_error'] = f"FFmpeg: {e}"
+            return False
+
+    def _start_gstreamer_bridge(self, rtsp_url):
+        """Inicia lector GStreamer"""
+        try:
+            self.gst_reader = GStreamerRTSPReader(rtsp_url)
+            if self.gst_reader.start():
+                self.using_gstreamer = True
+                import threading
+                self.gst_thread = threading.Thread(
+                    target=self._process_gstreamer_frames,
+                    daemon=True
+                )
+                self.gst_thread.start()
+                self.log_signal.emit(f"✅ [{self.objectName()}] GStreamer Bridge ACTIVO")
+                return True
+            else:
+                return False
+        except Exception as e:
+            self.log_signal.emit(f"❌ [{self.objectName()}] Error GStreamer Bridge: {e}")
+            self.stats['errors'] += 1
+            self.stats['last_error'] = f"GStreamer: {e}"
             return False
 
     def _start_qmediaplayer(self, rtsp_url):
@@ -326,6 +379,61 @@ class VisualizadorDetector(QObject):
         
         self.log_signal.emit(f"🛑 [{self.objectName()}] Thread FFmpeg terminado")
 
+    def _process_gstreamer_frames(self):
+        """Procesar frames desde GStreamer"""
+        frame_count = 0
+        last_log_time = time.time()
+
+        self.log_signal.emit(f"🎬 [{self.objectName()}] Thread GStreamer iniciado")
+
+        while (hasattr(self, 'gst_reader') and
+               self.gst_reader and
+               self.gst_reader.isOpened()):
+
+            try:
+                ret, frame = self.gst_reader.read()
+
+                if ret and frame is not None:
+                    frame_count += 1
+                    self.stats['gst_frames'] += 1
+                    self.stats['total_frames'] += 1
+
+                    processing_time = self._process_frame_universal(
+                        frame, frame_count, source="gstreamer"
+                    )
+
+                    if processing_time:
+                        self.stats['processing_times'].append(processing_time)
+                        if len(self.stats['processing_times']) > 100:
+                            self.stats['processing_times'].pop(0)
+
+                        avg_time = sum(self.stats['processing_times']) / len(self.stats['processing_times'])
+                        self.stats['avg_processing_time'] = avg_time
+
+                    if self.debug_visual and frame_count % 3 == 0:
+                        self._emit_debug_frame(frame)
+
+                    if frame_count % 100 == 0 or time.time() - last_log_time > 10:
+                        elapsed = time.time() - self.stats['start_time']
+                        fps = self.stats['gst_frames'] / elapsed if elapsed > 0 else 0
+
+                        self.log_signal.emit(
+                            f"📷 [{self.objectName()}] GStreamer: {frame_count} frames "
+                            f"({fps:.1f} FPS) | Proc: {self.stats['avg_processing_time']*1000:.1f}ms"
+                        )
+                        last_log_time = time.time()
+
+                else:
+                    time.sleep(0.01)
+
+            except Exception as e:
+                self.log_signal.emit(f"❌ [{self.objectName()}] Error procesando frame GStreamer: {e}")
+                self.stats['errors'] += 1
+                self.stats['last_error'] = f"GStreamer processing: {e}"
+                break
+
+        self.log_signal.emit(f"🛑 [{self.objectName()}] Thread GStreamer terminado")
+
     def _emit_debug_frame(self, frame):
         """Emitir frame para debug visual"""
         try:
@@ -373,7 +481,13 @@ class VisualizadorDetector(QObject):
             painter.setPen(QColor(255, 255, 255))
             
             fps_text = f"FPS: {self.stats['current_fps']:.1f}"
-            source_text = f"Fuente: {'FFmpeg' if self.using_ffmpeg else 'Qt'}"
+            if self.using_gstreamer:
+                source_lbl = 'GStreamer'
+            elif self.using_ffmpeg:
+                source_lbl = 'FFmpeg'
+            else:
+                source_lbl = 'Qt'
+            source_text = f"Fuente: {source_lbl}"
             frames_text = f"Frames: {self.stats['total_frames']}"
             proc_text = f"Proc: {self.stats['avg_processing_time']*1000:.1f}ms"
             
@@ -558,8 +672,10 @@ class VisualizadorDetector(QObject):
                 'current_fps': self.stats['current_fps'],
                 'avg_fps': self.stats['total_frames'] / elapsed if elapsed > 0 else 0,
                 'ffmpeg_frames': self.stats['ffmpeg_frames'],
+                'gst_frames': self.stats['gst_frames'],
                 'qt_frames': self.stats['qt_frames'],
                 'using_ffmpeg': self.using_ffmpeg,
+                'using_gstreamer': self.using_gstreamer,
                 'ffmpeg_strategy': self.ffmpeg_strategy,
                 'nvidia_enabled': self.nvidia_enabled,
                 'avg_processing_time_ms': self.stats['avg_processing_time'] * 1000,
@@ -575,7 +691,8 @@ class VisualizadorDetector(QObject):
                     f"📊 [{self.objectName()}] "
                     f"Frames: {self.stats['total_frames']} | "
                     f"FPS: {self.stats['current_fps']:.1f} | "
-                    f"Source: {'FFmpeg' if self.using_ffmpeg else 'Qt'} | "
+                    f"Source: "
+                    f"{'GStreamer' if self.using_gstreamer else ('FFmpeg' if self.using_ffmpeg else 'Qt')} | "
                     f"Errors: {self.stats['errors']}"
                 )
         
@@ -670,6 +787,21 @@ class VisualizadorDetector(QObject):
             except Exception as e:
                 self.log_signal.emit(f"⚠️ [{self.objectName()}] Error liberando FFmpeg: {e}")
             self.ffmpeg_reader = None
+        if self.ffmpeg_thread:
+            self.ffmpeg_thread.join(timeout=2)
+            self.ffmpeg_thread = None
+
+        # Detener GStreamer Bridge
+        if self.gst_reader:
+            try:
+                self.log_signal.emit(f"🛑 [{self.objectName()}] Liberando GStreamer Bridge...")
+                self.gst_reader.release()
+            except Exception as e:
+                self.log_signal.emit(f"⚠️ [{self.objectName()}] Error liberando GStreamer: {e}")
+            self.gst_reader = None
+        if self.gst_thread:
+            self.gst_thread.join(timeout=2)
+            self.gst_thread = None
         
         # Detener QMediaPlayer
         if self.video_player:
@@ -696,7 +828,13 @@ class VisualizadorDetector(QObject):
         self.log_signal.emit(f"   ⏱️ Tiempo total: {final_stats['performance']['uptime_seconds']:.1f}s")
         self.log_signal.emit(f"   📷 Frames procesados: {final_stats['performance']['total_frames']}")
         self.log_signal.emit(f"   📈 FPS promedio: {final_stats['performance']['average_fps']:.1f}")
-        self.log_signal.emit(f"   🚀 Fuente: {'FFmpeg' if self.using_ffmpeg else 'QMediaPlayer'}")
+        if self.using_gstreamer:
+            source_name = 'GStreamer'
+        elif self.using_ffmpeg:
+            source_name = 'FFmpeg'
+        else:
+            source_name = 'QMediaPlayer'
+        self.log_signal.emit(f"   🚀 Fuente: {source_name}")
         self.log_signal.emit(f"   ❌ Errores: {final_stats['errors']['total_errors']}")
         
         self.log_signal.emit(f"✅ [{self.objectName()}] VisualizadorDetector detenido completamente")
@@ -724,8 +862,10 @@ class VisualizadorDetector(QObject):
             },
             'source_info': {
                 'using_ffmpeg': self.using_ffmpeg,
+                'using_gstreamer': self.using_gstreamer,
                 'ffmpeg_strategy': self.ffmpeg_strategy,
                 'ffmpeg_frames': self.stats['ffmpeg_frames'],
+                'gst_frames': self.stats['gst_frames'],
                 'qt_frames': self.stats['qt_frames'],
                 'nvidia_enabled': self.nvidia_enabled
             },

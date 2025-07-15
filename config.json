@@ -520,5 +520,6 @@
         "max_backups": 10,
         "log_level": "INFO"
     },
-    "last_modified": "2025-07-14T18:02:39.315048"
+    "last_modified": "2025-07-14T18:02:39.315048",
+    "decoder_backend": "ffmpeg"
 }

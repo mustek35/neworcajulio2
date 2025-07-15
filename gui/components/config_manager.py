@@ -73,7 +73,8 @@ class ConfigManager(QObject):
                 "auto_save_interval": 300,  # 5 minutos
                 "max_backups": 10,
                 "log_level": "INFO"
-            }
+            },
+            "decoder_backend": "ffmpeg"
         }
         
         # Estado de auto-guardado
